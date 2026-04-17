@@ -305,8 +305,9 @@ function NavItem({icon,label,active,onClick,badge}){
   );
 }
 
-function Sidebar({user,convs,activeId,onSelect,onNew,onDelete,view,onView,onLogout,userCount}){
+function Sidebar({user,convs,activeId,onSelect,onNew,onDelete,view,onView,onLogout,userCount,cfg}){
   const isAdmin=user.role==='admin';
+  const hasKey=cfg&&cfg.apiKey&&cfg.apiKey.trim().length>0;
   return e('div',{style:{width:240,minWidth:240,background:C.surface,borderRight:`1px solid ${C.border}`,display:'flex',flexDirection:'column',height:'100vh',overflow:'hidden'}},
     // Header
     e('div',{style:{padding:'16px 14px 12px',borderBottom:`1px solid ${C.border}`,display:'flex',alignItems:'center',gap:10}},
@@ -362,8 +363,8 @@ function Sidebar({user,convs,activeId,onSelect,onNew,onDelete,view,onView,onLogo
     // Footer
     e('div',{style:{padding:'10px 8px 12px',borderTop:`1px solid ${C.border}`,display:'flex',flexDirection:'column',gap:6}},
       e('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'7px 10px',borderRadius:8,background:C.card,border:`1px solid ${C.border}`}},
-        e('div',{style:{width:6,height:6,borderRadius:'50%',background:C.green,boxShadow:`0 0 7px rgba(76,175,130,0.6)`,flexShrink:0}}),
-        e('span',{style:{fontSize:10,fontWeight:700,color:C.text,fontFamily:SS}},'Groq \u00b7 Online'),
+        e('div',{style:{width:6,height:6,borderRadius:'50%',background:hasKey?C.green:C.red,boxShadow:`0 0 7px ${hasKey?'rgba(76,175,130,0.6)':'rgba(224,92,92,0.6)'}`,flexShrink:0}}),
+        e('span',{style:{fontSize:10,fontWeight:700,color:C.text,fontFamily:SS}},hasKey?'API Key configurada':'API Key não configurada'),
       ),
       e('button',{onClick:onLogout,
         style:{width:'100%',padding:'7px',borderRadius:8,cursor:'pointer',background:'transparent',border:`1px solid ${C.border}`,color:C.muted,fontSize:11,fontFamily:SS,transition:'all 0.12s',fontWeight:600},
@@ -529,7 +530,11 @@ function SettingsView({user,cfg,onSave,onUpdateUser}){
   const [passOk,setPassOk]=useState(false);
 
   const doSave=()=>{
-    onSave({...cfg,apiKey,model,systemPrompt:sys});
+    if(apiKey && !apiKey.trim().startsWith('gsk_')){
+      alert('⚠️ A Groq API Key deve começar com "gsk_". Verifique se copiou corretamente.');
+      return;
+    }
+    onSave({...cfg,apiKey:apiKey.trim(),model,systemPrompt:sys});
     if(name!==user.name||email!==user.email){
       onUpdateUser({...user,name,email});
     }
@@ -906,10 +911,18 @@ function NexusIA(){
     URL.revokeObjectURL(a.href);
   },[]);
 
-  const handleSaveCfg=useCallback(s=>{setCfg(s);},[]);
+  const handleSaveCfg=useCallback(s=>{
+    setCfg(s);
+    save(K_CFG,s); // Força salvamento imediato no localStorage
+  },[]);
 
   const handleSend=useCallback(async text=>{
-    if(!cfg.apiKey||loading) return;
+    const currentCfg = load(K_CFG,cfg); // Recarrega config do localStorage
+    if(!currentCfg.apiKey||!currentCfg.apiKey.trim()){
+      alert('⚠️ Configure sua Groq API Key em Configurações antes de enviar mensagens.');
+      return;
+    }
+    if(loading) return;
     let conv=activeConv;
     if(!conv){conv={id:uid(),title:genTitle(text),messages:[],createdAt:Date.now(),updatedAt:Date.now()};}
     const userMsg={id:uid(),role:'user',content:text,timestamp:Date.now()};
@@ -920,7 +933,7 @@ function NexusIA(){
     setActiveId(updated.id);setLoading(true);
     try{
       let final='';
-      await callGroq(cfg.apiKey,cfg.model||DEFAULT_MODEL,[...conv.messages,userMsg],cfg.systemPrompt,partial=>{
+      await callGroq(currentCfg.apiKey,currentCfg.model||DEFAULT_MODEL,[...conv.messages,userMsg],currentCfg.systemPrompt,partial=>{
         final=partial;
         setConvs(prev=>prev.map(c=>c.id===updated.id?{...c,messages:c.messages.map(m=>m.id===aiId?{...m,content:partial}:m)}:c));
       });
@@ -940,7 +953,7 @@ function NexusIA(){
   const userCount=load(K_USERS,[]).length;
 
   return e('div',{style:{display:'flex',height:'100vh',overflow:'hidden',background:C.bg,color:C.text}},
-    e(Sidebar,{user:currentUser,convs,activeId,onSelect:setActiveId,onNew:newConv,onDelete:deleteConv,view,onView:setView,onLogout:handleLogout,userCount}),
+    e(Sidebar,{user:currentUser,convs,activeId,onSelect:setActiveId,onNew:newConv,onDelete:deleteConv,view,onView:setView,onLogout:handleLogout,userCount,cfg}),
     view==='chat'?e(ChatView,{user:currentUser,conv:activeConv,cfg,onSend:handleSend,loading}):null,
     view==='arquivo'?e(ArquivoView,{docs,onDelete:deleteDoc,onDownload:downloadDoc}):null,
     view==='settings'?e(SettingsView,{user:currentUser,cfg,onSave:handleSaveCfg,onUpdateUser:handleUpdateUser}):null,
