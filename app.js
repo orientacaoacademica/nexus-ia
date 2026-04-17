@@ -8,15 +8,15 @@ const e = React.createElement;
 
 // ── Modelos Groq (atualizado abril 2026) ──────────────────────
 const MODELS = [
+  { id: 'llama-3.1-8b-instant',         label: 'Llama 3.1 8B — Rápido e eficiente (padrão)', best: 'rápido',    ctx: 128000 },
+  { id: 'llama-3.3-70b-versatile',      label: 'Llama 3.3 70B — Versátil geral',        best: 'geral',     ctx: 128000 },
   { id: 'openai/gpt-oss-120b',          label: 'GPT-OSS 120B — Inteligência máxima',    best: 'complexo',  ctx: 131072 },
   { id: 'moonshotai/kimi-k2-0905',      label: 'Kimi K2 — Contexto gigante (262k)',     best: 'longo',     ctx: 262144 },
-  { id: 'llama-3.3-70b-versatile',      label: 'Llama 3.3 70B — Versátil geral',        best: 'geral',     ctx: 128000 },
   { id: 'meta-llama/llama-4-scout-17b-16e-instruct', label: 'Llama 4 Scout — Multimodal rápido',     best: 'visão',   ctx: 131072 },
   { id: 'qwen/qwen3-32b',               label: 'Qwen 3 32B — Raciocínio estruturado',   best: 'análise',   ctx: 131072 },
-  { id: 'llama-3.1-8b-instant',         label: 'Llama 3.1 8B — Ultra rápido',           best: 'rápido',    ctx: 128000 },
   { id: 'openai/gpt-oss-20b',           label: 'GPT-OSS 20B — Balanceado veloz',        best: 'balanceado',ctx: 131072 },
 ];
-const DEFAULT_MODEL = 'openai/gpt-oss-120b';
+const DEFAULT_MODEL = 'llama-3.1-8b-instant';
 
 // ── Storage keys ──────────────────────────────────────────────
 const K_USERS    = 'nexus-users-v1';
@@ -93,7 +93,7 @@ async function callGroq(apiKey,model,msgs,sys,onChunk){
     method:'POST',
     headers:{'Content-Type':'application/json','Authorization':`Bearer ${apiKey}`},
     body:JSON.stringify({
-      model,stream:true,max_tokens:8192,temperature:0.7,
+      model,stream:true,max_tokens:4096,temperature:0.7,
       messages:[{role:'system',content:system},...msgs.map(m=>({role:m.role,content:m.content}))],
     }),
   });
@@ -579,7 +579,7 @@ function SettingsView({user,cfg,onSave,onUpdateUser}){
           MODELS.map(m=>e('option',{key:m.id,value:m.id},m.label)),
         ),
         e('div',{style:{fontSize:11,color:C.faint,marginTop:5,fontFamily:SS}},
-          'GPT-OSS 120B \u00e9 recomendado para trabalho geral. Kimi K2 para documentos longos.',
+          'Llama 3.1 8B é o padrão (rápido e sem limites). Use GPT-OSS 120B para tarefas complexas.',
         ),
       ),
       e('div',null,
@@ -943,7 +943,11 @@ function NexusIA(){
         setConvs(prev=>prev.map(c=>c.id===updated.id?{...c,messages:c.messages.map(m=>m.id===aiId?{...m,savedDoc:doc}:m)}:c));
       }
     }catch(err){
-      setConvs(prev=>prev.map(c=>c.id===updated.id?{...c,messages:c.messages.map(m=>m.id===aiId?{...m,content:`\u274C Erro: ${err.message}`}:m)}:c));
+      let errorMsg = err.message;
+      if(errorMsg.includes('too large') || errorMsg.includes('Limit')){
+        errorMsg = 'Limite de tokens atingido. Tente: (1) usar mensagens mais curtas, (2) trocar para Llama 3.1 8B em Configurações, ou (3) aguardar 1 minuto.';
+      }
+      setConvs(prev=>prev.map(c=>c.id===updated.id?{...c,messages:c.messages.map(m=>m.id===aiId?{...m,content:`❌ Erro: ${errorMsg}`}:m)}:c));
     }
     setLoading(false);
   },[activeConv,loading,cfg]);
