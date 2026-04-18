@@ -1,6 +1,56 @@
 const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const e = React.createElement;
 
+// ── Supabase Config ───────────────────────────────────────────────
+// Projeto: nexusai (São Paulo)
+const SUPABASE_URL  = 'https://wtlaxmtsanhzonaiubsh.supabase.co';
+const SUPABASE_KEY  = 'sb_publishable_Ah7oFW9qXMg4-8U47U5Tag_dZJpQmro';
+
+// ── Supabase REST helpers ─────────────────────────────────────────
+const sb = {
+  headers: () => ({
+    'apikey':        SUPABASE_KEY,
+    'Authorization': `Bearer ${SUPABASE_KEY}`,
+    'Content-Type':  'application/json',
+    'Prefer':        'return=representation',
+  }),
+  async get(table, query=''){
+    try{
+      const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}${query}`, {headers: sb.headers()});
+      if(!r.ok) return null;
+      return await r.json();
+    }catch(err){ console.warn('[sb.get]', table, err); return null; }
+  },
+  async upsert(table, rows, onConflict='id'){
+    try{
+      const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}?on_conflict=${onConflict}`, {
+        method:'POST',
+        headers:{...sb.headers(), 'Prefer':'return=representation,resolution=merge-duplicates'},
+        body: JSON.stringify(Array.isArray(rows) ? rows : [rows]),
+      });
+      if(!r.ok){console.warn('[sb.upsert]', table, r.status); return null;}
+      return await r.json();
+    }catch(err){ console.warn('[sb.upsert]', table, err); return null; }
+  },
+  async delete(table, query){
+    try{
+      const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}${query}`, {
+        method:'DELETE', headers: sb.headers(),
+      });
+      return r.ok;
+    }catch(err){ console.warn('[sb.delete]', table, err); return false; }
+  },
+  async patch(table, query, patch){
+    try{
+      const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}${query}`, {
+        method:'PATCH', headers: sb.headers(), body: JSON.stringify(patch),
+      });
+      if(!r.ok) return null;
+      return await r.json();
+    }catch(err){ console.warn('[sb.patch]', table, err); return null; }
+  },
+};
+
 // ── Models ────────────────────────────────────────────────────────
 const MODELS = [
   { id:'openai/gpt-oss-120b',                       label:'GPT-OSS 120B — Inteligência máxima',   ctx:131072 },
@@ -123,11 +173,95 @@ const TYPE_META={relatorio:{label:'Relatório',icon:'📄'},analise:{label:'Aná
 const ld=(k,fb)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb;}catch{return fb;}};
 const sv=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch{}};
 
+// ── Mappers: linha Supabase ↔ objeto JS ──────────────────────────
+const u_fromDb = r => ({
+  id:r.id, username:r.username, name:r.name, email:r.email,
+  passwordHash:r.password_hash, role:r.role, active:r.active,
+  lastLogin: r.last_login ? new Date(r.last_login).getTime() : null,
+  createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+});
+const u_toDb = u => ({
+  id:u.id, username:u.username, name:u.name, email:u.email,
+  password_hash:u.passwordHash, role:u.role, active:u.active!==false,
+  last_login: u.lastLogin ? new Date(u.lastLogin).toISOString() : null,
+  created_at: u.createdAt ? new Date(u.createdAt).toISOString() : new Date().toISOString(),
+});
+const c_fromDb = r => ({
+  id:r.id, title:r.title, messages:r.messages||[], model:r.model, mode:r.mode,
+  createdAt: new Date(r.created_at).getTime(),
+  updatedAt: new Date(r.updated_at).getTime(),
+});
+const c_toDb = (c,userId) => ({
+  id:c.id, user_id:userId, title:c.title, messages:c.messages||[],
+  model:c.model||null, mode:c.mode||null,
+  created_at: new Date(c.createdAt||Date.now()).toISOString(),
+  updated_at: new Date(c.updatedAt||Date.now()).toISOString(),
+});
+const d_fromDb = r => ({
+  id:r.id, name:r.name, content:r.content, type:r.type,
+  createdAt: new Date(r.created_at).getTime(),
+});
+const d_toDb = (d,userId) => ({
+  id:d.id, user_id:userId, name:d.name, content:d.content||'',
+  type:d.type||'analise',
+  created_at: new Date(d.createdAt||Date.now()).toISOString(),
+});
+
+// ── Cloud sync: todas as chamadas são "fire and forget" ──────────
+// Se falhar, cai para localStorage silenciosamente. App continua funcional.
+async function cloudGetUsers(){
+  const rows = await sb.get('nexus_users', '?select=*&order=created_at.asc');
+  if(!rows) return null;
+  return rows.map(u_fromDb);
+}
+async function cloudSaveUser(u){ sb.upsert('nexus_users', u_toDb(u), 'id'); }
+async function cloudDeleteUser(id){ sb.delete('nexus_users', `?id=eq.${id}`); }
+
+async function cloudGetConvs(userId){
+  const rows = await sb.get('nexus_conversations', `?user_id=eq.${userId}&select=*&order=updated_at.desc&limit=200`);
+  if(!rows) return null;
+  return rows.map(c_fromDb);
+}
+async function cloudSaveConv(c, userId){ sb.upsert('nexus_conversations', c_toDb(c,userId), 'id'); }
+async function cloudDeleteConv(id){ sb.delete('nexus_conversations', `?id=eq.${id}`); }
+
+async function cloudGetDocs(userId){
+  const rows = await sb.get('nexus_documents', `?user_id=eq.${userId}&select=*&order=created_at.desc&limit=300`);
+  if(!rows) return null;
+  return rows.map(d_fromDb);
+}
+async function cloudSaveDoc(d, userId){ sb.upsert('nexus_documents', d_toDb(d,userId), 'id'); }
+async function cloudDeleteDoc(id){ sb.delete('nexus_documents', `?id=eq.${id}`); }
+
+async function cloudGetSettings(userId){
+  const rows = await sb.get('nexus_settings', `?user_id=eq.${userId}&select=*&limit=1`);
+  if(!rows || rows.length===0) return null;
+  const r = rows[0];
+  return {apiKey:r.api_key||'', model:r.model, mode:r.mode||'academic', systemPrompt:r.system_prompt||''};
+}
+async function cloudSaveSettings(userId, cfg){
+  sb.upsert('nexus_settings', {
+    user_id:userId, api_key:cfg.apiKey||'', model:cfg.model||null,
+    mode:cfg.mode||'academic', system_prompt:cfg.systemPrompt||'',
+    updated_at:new Date().toISOString(),
+  }, 'user_id');
+}
+
+// Retorna true se a conexão Supabase está ativa. Faz ping rápido.
+async function cloudPing(){
+  try{
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/nexus_users?select=id&limit=1`, {headers: sb.headers()});
+    return r.ok;
+  }catch{ return false; }
+}
+
 function initUsers(){
   const ex=ld(K_USERS,null);
   if(ex&&ex.length>0)return ex;
   const a={id:uid(),username:'admin',name:'Administrador',email:'admin@nexusia.com',passwordHash:simpleHash('admin123'),role:'admin',createdAt:Date.now(),lastLogin:null,active:true};
-  sv(K_USERS,[a]);return[a];
+  sv(K_USERS,[a]);
+  cloudSaveUser(a); // provisiona no Supabase também
+  return[a];
 }
 
 // ── Groq streaming ────────────────────────────────────────────────
@@ -191,22 +325,34 @@ function LoginScreen({onLogin}){
   const doLogin=async()=>{
     if(!username||!password){setErr('Preencha usuário e senha.');return;}
     setLoading(true);setErr('');
-    await new Promise(r=>setTimeout(r,400));
+    // Tenta sincronizar usuários do Supabase antes de logar
+    const cloudUsers = await cloudGetUsers();
+    if(cloudUsers){ sv(K_USERS, cloudUsers); }
     const users=ld(K_USERS,[]);
     const u=users.find(x=>x.username===username.trim().toLowerCase());
     if(!u||!u.active||u.passwordHash!==simpleHash(password)){setErr(!u?'Usuário não encontrado.':!u.active?'Conta desativada.':'Senha incorreta.');setLoading(false);return;}
-    u.lastLogin=Date.now();sv(K_USERS,users.map(x=>x.id===u.id?u:x));sv(K_SESSION,{userId:u.id,loggedAt:Date.now()});onLogin(u);
+    u.lastLogin=Date.now();
+    sv(K_USERS,users.map(x=>x.id===u.id?u:x));
+    sv(K_SESSION,{userId:u.id,loggedAt:Date.now()});
+    cloudSaveUser(u);    // atualiza lastLogin na nuvem
+    onLogin(u);
   };
 
   const doRegister=async()=>{
     if(!username||!password||!name||!email){setErr('Preencha todos os campos.');return;}
     if(password.length<6){setErr('Senha deve ter ao menos 6 caracteres.');return;}
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){setErr('Email inválido.');return;}
+    // Sincroniza antes para checar duplicidade global
+    const cloudUsers = await cloudGetUsers();
+    if(cloudUsers){ sv(K_USERS, cloudUsers); }
     const users=ld(K_USERS,[]);
     if(users.some(x=>x.username===username.trim().toLowerCase())){setErr('Usuário já existe.');return;}
-    setLoading(true);setErr('');await new Promise(r=>setTimeout(r,400));
+    setLoading(true);setErr('');
     const nu={id:uid(),username:username.trim().toLowerCase(),name:name.trim(),email:email.trim().toLowerCase(),passwordHash:simpleHash(password),role:'user',createdAt:Date.now(),lastLogin:Date.now(),active:true};
-    sv(K_USERS,[...users,nu]);sv(K_SESSION,{userId:nu.id,loggedAt:Date.now()});onLogin(nu);
+    sv(K_USERS,[...users,nu]);
+    sv(K_SESSION,{userId:nu.id,loggedAt:Date.now()});
+    cloudSaveUser(nu);   // cria na nuvem
+    onLogin(nu);
   };
 
   const submit=mode==='login'?doLogin:doRegister;
@@ -335,7 +481,7 @@ function NavItem({icon,label,active,onClick,badge}){
 }
 
 // ── Sidebar ───────────────────────────────────────────────────────
-function Sidebar({user,convs,activeId,onSelect,onNew,onDelete,view,onView,onLogout,userCount}){
+function Sidebar({user,convs,activeId,onSelect,onNew,onDelete,view,onView,onLogout,userCount,cloudStatus}){
   const isAdmin=user.role==='admin';
   return e('div',{style:{width:245,minWidth:245,background:'#10111c',borderRight:'1px solid #1e2035',display:'flex',flexDirection:'column',height:'100vh',overflow:'hidden'}},
     // Brand
@@ -384,8 +530,8 @@ function Sidebar({user,convs,activeId,onSelect,onNew,onDelete,view,onView,onLogo
     // Footer
     e('div',{style:{padding:'10px 8px 14px',borderTop:'1px solid #1e2035',display:'flex',flexDirection:'column',gap:5}},
       e('div',{style:{display:'flex',alignItems:'center',gap:7,padding:'6px 10px',borderRadius:7,background:'rgba(0,0,0,0.2)',border:'1px solid #1e2035'}},
-        e('div',{style:{width:5,height:5,borderRadius:'50%',background:'#3d9e72',boxShadow:'0 0 6px rgba(61,158,114,0.7)',flexShrink:0,animation:'pulse 2s ease infinite'}}),
-        e('span',{style:{fontSize:10,fontWeight:600,color:'#e8e6e0',fontFamily:"'DM Sans',sans-serif"}},'Groq · Online'),
+        e('div',{style:{width:5,height:5,borderRadius:'50%',background:cloudStatus==='online'?'#3d9e72':cloudStatus==='offline'?'#c0514f':'#c8a44a',boxShadow:cloudStatus==='online'?'0 0 6px rgba(61,158,114,0.7)':cloudStatus==='offline'?'0 0 6px rgba(192,81,79,0.6)':'0 0 6px rgba(200,164,74,0.6)',flexShrink:0,animation:'pulse 2s ease infinite'}}),
+        e('span',{style:{fontSize:10,fontWeight:600,color:'#e8e6e0',fontFamily:"'DM Sans',sans-serif"}},cloudStatus==='online'?'☁ Supabase · Sincronizado':cloudStatus==='offline'?'📵 Offline · Local':'Conectando…'),
       ),
       e('button',{onClick:onLogout,style:{width:'100%',padding:'7px',borderRadius:7,cursor:'pointer',background:'transparent',border:'1px solid #1e2035',color:'#7a7d99',fontSize:11,fontFamily:"'DM Sans',sans-serif",transition:'all 0.12s',fontWeight:500},
         onMouseEnter:ev=>{ev.currentTarget.style.borderColor='#c0514f';ev.currentTarget.style.color='#c0514f';},
@@ -719,9 +865,28 @@ function AdminView({currentUser,onUpdate}){
   const [nU,setNU]=useState({username:'',name:'',email:'',password:'',role:'user'});
   const [nErr,setNErr]=useState('');
 
-  const tog=(id,field)=>{if(id===currentUser.id)return;const u=users.map(x=>x.id===id?{...x,[field]:field==='active'?!x.active:x.role==='admin'?'user':'admin'}:x);sv(K_USERS,u);setUsers(u);};
-  const del=id=>{if(id===currentUser.id||!confirm('Excluir este usuário?'))return;const u=users.filter(x=>x.id!==id);sv(K_USERS,u);setUsers(u);};
-  const resetPw=id=>{const p=prompt('Nova senha (mín. 6):');if(!p||p.length<6)return;const u=users.map(x=>x.id===id?{...x,passwordHash:simpleHash(p)}:x);sv(K_USERS,u);setUsers(u);alert('Senha redefinida.');};
+  const tog=(id,field)=>{
+    if(id===currentUser.id)return;
+    const u=users.map(x=>x.id===id?{...x,[field]:field==='active'?!x.active:x.role==='admin'?'user':'admin'}:x);
+    sv(K_USERS,u);setUsers(u);
+    const changed=u.find(x=>x.id===id);
+    if(changed) cloudSaveUser(changed);
+  };
+  const del=id=>{
+    if(id===currentUser.id||!confirm('Excluir este usuário?'))return;
+    const u=users.filter(x=>x.id!==id);
+    sv(K_USERS,u);setUsers(u);
+    cloudDeleteUser(id);
+  };
+  const resetPw=id=>{
+    const p=prompt('Nova senha (mín. 6):');
+    if(!p||p.length<6)return;
+    const u=users.map(x=>x.id===id?{...x,passwordHash:simpleHash(p)}:x);
+    sv(K_USERS,u);setUsers(u);
+    const changed=u.find(x=>x.id===id);
+    if(changed) cloudSaveUser(changed);
+    alert('Senha redefinida.');
+  };
   const create=()=>{
     setNErr('');
     if(!nU.username||!nU.name||!nU.email||!nU.password){setNErr('Preencha todos os campos.');return;}
@@ -729,7 +894,10 @@ function AdminView({currentUser,onUpdate}){
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nU.email)){setNErr('Email inválido.');return;}
     if(users.some(x=>x.username===nU.username.trim().toLowerCase())){setNErr('Usuário já existe.');return;}
     const nu={id:uid(),username:nU.username.trim().toLowerCase(),name:nU.name.trim(),email:nU.email.trim().toLowerCase(),passwordHash:simpleHash(nU.password),role:nU.role,createdAt:Date.now(),lastLogin:null,active:true};
-    const u=[...users,nu];sv(K_USERS,u);setUsers(u);setNU({username:'',name:'',email:'',password:'',role:'user'});setShowNew(false);
+    const u=[...users,nu];
+    sv(K_USERS,u);setUsers(u);
+    cloudSaveUser(nu);
+    setNU({username:'',name:'',email:'',password:'',role:'user'});setShowNew(false);
   };
 
   const filtered=users.filter(u=>{
@@ -817,19 +985,86 @@ function NexusIA(){
   const [docs,setDocs]=useState(()=>ld(K_DOCS,[]));
   const [loading,setLoading]=useState(false);
   const [view,setView]=useState('chat');
+  const [cloudStatus,setCloudStatus]=useState('checking'); // checking | online | offline
 
+  // Carrega dados do Supabase quando o usuário loga
+  useEffect(()=>{
+    if(!currentUser) return;
+    let cancelled=false;
+    (async()=>{
+      const online = await cloudPing();
+      if(cancelled) return;
+      setCloudStatus(online?'online':'offline');
+      if(!online) return;
+      // Puxa dados da nuvem em paralelo
+      const [cloudConvs, cloudDocs, cloudCfg] = await Promise.all([
+        cloudGetConvs(currentUser.id),
+        cloudGetDocs(currentUser.id),
+        cloudGetSettings(currentUser.id),
+      ]);
+      if(cancelled) return;
+      if(cloudConvs && cloudConvs.length>0){
+        setConvs(cloudConvs);
+        sv(K_CONVS,cloudConvs);
+        setActiveId(cloudConvs[0]?.id||null);
+      }
+      if(cloudDocs){ setDocs(cloudDocs); sv(K_DOCS,cloudDocs); }
+      if(cloudCfg){
+        // preserva API key local se houver e não houver na nuvem
+        const merged = {...cloudCfg, apiKey: cloudCfg.apiKey || cfg.apiKey || ''};
+        setCfg(merged);
+        sv(K_CFG,merged);
+      }
+    })();
+    return ()=>{cancelled=true;};
+  },[currentUser?.id]);
+
+  // Cache local sempre espelha o estado
   useEffect(()=>{sv(K_CONVS,convs);},[convs]);
   useEffect(()=>{sv(K_DOCS,docs);},[docs]);
   useEffect(()=>{sv(K_CFG,cfg);},[cfg]);
 
   const activeConv=convs.find(c=>c.id===activeId)||null;
+
   const handleLogin=useCallback(u=>{setCurrentUser(u);setUsers(ld(K_USERS,[]));setView('chat');},[]);
-  const handleLogout=useCallback(()=>{localStorage.removeItem(K_SESSION);setCurrentUser(null);},[]);
-  const handleUpdateUser=useCallback(upd=>{const all=ld(K_USERS,[]);const na=all.map(u=>u.id===upd.id?upd:u);sv(K_USERS,na);setUsers(na);if(upd.id===currentUser?.id)setCurrentUser(upd);},[currentUser]);
-  const newConv=useCallback(()=>{const c={id:uid(),title:'Nova conversa',messages:[],createdAt:Date.now(),updatedAt:Date.now()};setConvs(p=>[c,...p]);setActiveId(c.id);setView('chat');return c;},[]);
-  const deleteConv=useCallback(id=>{setConvs(p=>p.filter(c=>c.id!==id));setActiveId(p=>p===id?convs.find(c=>c.id!==id)?.id||null:p);},[convs]);
-  const clearConv=useCallback(()=>{if(!activeConv)return;setConvs(p=>p.map(c=>c.id===activeConv.id?{...c,messages:[],title:'Nova conversa',updatedAt:Date.now()}:c));},[activeConv]);
-  const deleteDoc=useCallback(id=>setDocs(p=>p.filter(d=>d.id!==id)),[]);
+  const handleLogout=useCallback(()=>{localStorage.removeItem(K_SESSION);setCurrentUser(null);setConvs([]);setDocs([]);setActiveId(null);},[]);
+
+  const handleUpdateUser=useCallback(upd=>{
+    const all=ld(K_USERS,[]);
+    const na=all.map(u=>u.id===upd.id?upd:u);
+    sv(K_USERS,na);setUsers(na);
+    if(upd.id===currentUser?.id)setCurrentUser(upd);
+    cloudSaveUser(upd);  // sync para nuvem
+  },[currentUser]);
+
+  const handleSaveCfg=useCallback(newCfg=>{
+    setCfg(newCfg);
+    if(currentUser) cloudSaveSettings(currentUser.id, newCfg);
+  },[currentUser]);
+
+  const newConv=useCallback(()=>{
+    const c={id:uid(),title:'Nova conversa',messages:[],createdAt:Date.now(),updatedAt:Date.now()};
+    setConvs(p=>[c,...p]);setActiveId(c.id);setView('chat');return c;
+  },[]);
+
+  const deleteConv=useCallback(id=>{
+    setConvs(p=>p.filter(c=>c.id!==id));
+    setActiveId(p=>p===id?convs.find(c=>c.id!==id)?.id||null:p);
+    cloudDeleteConv(id);
+  },[convs]);
+
+  const clearConv=useCallback(()=>{
+    if(!activeConv)return;
+    const cleared={...activeConv,messages:[],title:'Nova conversa',updatedAt:Date.now()};
+    setConvs(p=>p.map(c=>c.id===activeConv.id?cleared:c));
+    if(currentUser) cloudSaveConv(cleared, currentUser.id);
+  },[activeConv,currentUser]);
+
+  const deleteDoc=useCallback(id=>{
+    setDocs(p=>p.filter(d=>d.id!==id));
+    cloudDeleteDoc(id);
+  },[]);
+
   const downloadDoc=useCallback(d=>{const md=`# ${d.name}\n\n_${fmtDate(d.createdAt)}_\n\n---\n\n${d.content}`;const b=new Blob([md],{type:'text/markdown'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=`${d.name.slice(0,50).replace(/[^a-z0-9]/gi,'-')}.md`;a.click();URL.revokeObjectURL(a.href);},[]);
 
   const handleSend=useCallback(async rawText=>{
@@ -841,7 +1076,9 @@ function NexusIA(){
       const msgs=[...conv.messages,{id:uid(),role:'user',content:'/ajuda',timestamp:Date.now()},{id:uid(),role:'assistant',content:'📋 **Comandos disponíveis:**\n\n'+help+'\n\n💡 *Digite `/` para autocompletar.*',timestamp:Date.now()}];
       const upd={...conv,messages:msgs,updatedAt:Date.now()};
       setConvs(p=>{const ex=p.find(c=>c.id===upd.id);return ex?p.map(c=>c.id===upd.id?upd:c):[upd,...p];});
-      setActiveId(upd.id);return;
+      setActiveId(upd.id);
+      if(currentUser) cloudSaveConv(upd, currentUser.id);
+      return;
     }
     const tools=toolsForSlash(rawText);
     const text=expandSlash(rawText);
@@ -860,25 +1097,37 @@ function NexusIA(){
         final=partial;
         setConvs(p=>p.map(c=>c.id===upd.id?{...c,messages:c.messages.map(m=>m.id===aiId?{...m,content:partial,toolsDone:true}:m)}:c));
       });
+      let finalConv=null;
       if(final.length>400){
         const doc={id:uid(),name:genTitle(rawText),content:final,type:docType(final,rawText),createdAt:Date.now()};
         setDocs(p=>[doc,...p]);
-        setConvs(p=>p.map(c=>c.id===upd.id?{...c,messages:c.messages.map(m=>m.id===aiId?{...m,savedDoc:doc}:m)}:c));
+        setConvs(p=>{
+          finalConv=p.map(c=>c.id===upd.id?{...c,messages:c.messages.map(m=>m.id===aiId?{...m,savedDoc:doc}:m)}:c).find(c=>c.id===upd.id);
+          return p.map(c=>c.id===upd.id?{...c,messages:c.messages.map(m=>m.id===aiId?{...m,savedDoc:doc}:m)}:c);
+        });
+        if(currentUser) cloudSaveDoc(doc, currentUser.id);
+      }
+      // Salva conversa completa na nuvem após streaming
+      if(currentUser){
+        setTimeout(()=>{
+          const latest = ld(K_CONVS,[]).find(c=>c.id===upd.id);
+          if(latest) cloudSaveConv(latest, currentUser.id);
+        }, 100);
       }
     }catch(err){
       setConvs(p=>p.map(c=>c.id===upd.id?{...c,messages:c.messages.map(m=>m.id===aiId?{...m,content:`❌ Erro: ${err.message}`}:m)}:c));
     }
     setLoading(false);
-  },[activeConv,loading,cfg,clearConv]);
+  },[activeConv,loading,cfg,clearConv,currentUser]);
 
   if(!currentUser)return e(LoginScreen,{onLogin:handleLogin});
   const userCount=ld(K_USERS,[]).length;
 
   return e('div',{style:{display:'flex',height:'100vh',overflow:'hidden'}},
-    e(Sidebar,{user:currentUser,convs,activeId,onSelect:setActiveId,onNew:newConv,onDelete:deleteConv,view,onView:setView,onLogout:handleLogout,userCount}),
+    e(Sidebar,{user:currentUser,convs,activeId,onSelect:setActiveId,onNew:newConv,onDelete:deleteConv,view,onView:setView,onLogout:handleLogout,userCount,cloudStatus}),
     view==='chat'    ?e(ChatView,    {user:currentUser,conv:activeConv,cfg,onSend:handleSend,loading,onClear:clearConv}):null,
     view==='arquivo' ?e(ArquivoView, {docs,onDelete:deleteDoc,onDownload:downloadDoc}):null,
-    view==='settings'?e(SettingsView,{user:currentUser,cfg,onSave:setCfg,onUpdateUser:handleUpdateUser}):null,
+    view==='settings'?e(SettingsView,{user:currentUser,cfg,onSave:handleSaveCfg,onUpdateUser:handleUpdateUser}):null,
     view==='admin'&&currentUser.role==='admin'?e(AdminView,{currentUser,onUpdate:handleUpdateUser}):null,
   );
 }
