@@ -53,15 +53,15 @@ const sb = {
 
 // ── Models ────────────────────────────────────────────────────────
 const MODELS = [
-  { id:'openai/gpt-oss-120b',                       label:'GPT-OSS 120B — Inteligência máxima',   ctx:131072 },
-  { id:'moonshotai/kimi-k2-0905',                   label:'Kimi K2 — Contexto gigante (262k)',    ctx:262144 },
-  { id:'llama-3.3-70b-versatile',                   label:'Llama 3.3 70B — Versátil geral',       ctx:128000 },
-  { id:'meta-llama/llama-4-scout-17b-16e-instruct', label:'Llama 4 Scout — Multimodal rápido',   ctx:131072 },
-  { id:'qwen/qwen3-32b',                            label:'Qwen 3 32B — Raciocínio estruturado',  ctx:131072 },
-  { id:'llama-3.1-8b-instant',                      label:'Llama 3.1 8B — Ultra rápido',          ctx:128000 },
-  { id:'openai/gpt-oss-20b',                        label:'GPT-OSS 20B — Balanceado veloz',       ctx:131072 },
+  { id:'llama-3.3-70b-versatile',                   label:'Llama 3.3 70B — Equilíbrio recomendado ⭐',  ctx:128000 },
+  { id:'openai/gpt-oss-20b',                        label:'GPT-OSS 20B — Rápido e inteligente',         ctx:131072 },
+  { id:'llama-3.1-8b-instant',                      label:'Llama 3.1 8B — Ultra rápido',                ctx:128000 },
+  { id:'meta-llama/llama-4-scout-17b-16e-instruct', label:'Llama 4 Scout — Multimodal',                ctx:131072 },
+  { id:'qwen/qwen3-32b',                            label:'Qwen 3 32B — Raciocínio estruturado',        ctx:131072 },
+  { id:'openai/gpt-oss-120b',                       label:'GPT-OSS 120B — Máxima (pode exceder TPM free)', ctx:131072 },
+  { id:'moonshotai/kimi-k2-0905',                   label:'Kimi K2 — Contexto 262k (pode exceder TPM free)', ctx:262144 },
 ];
-const DEFAULT_MODEL = 'openai/gpt-oss-120b';
+const DEFAULT_MODEL = 'llama-3.3-70b-versatile';
 
 const K_USERS   = 'nexus-users-v2';
 const K_SESSION = 'nexus-session-v2';
@@ -266,10 +266,19 @@ function initUsers(){
 
 // ── Groq streaming ────────────────────────────────────────────────
 async function callGroq(apiKey,model,msgs,sys,onChunk){
+  // Ajusta max_tokens conforme o modelo (tier free tem TPM limitado)
+  let maxTokens = 4096;
+  if(model.includes('gpt-oss-120b')) maxTokens = 2048;      // 8k TPM free
+  else if(model.includes('kimi-k2'))  maxTokens = 2048;      // 10k TPM free
+  else if(model.includes('gpt-oss-20b')) maxTokens = 4096;
+  else if(model.includes('8b-instant')) maxTokens = 4096;
+  else if(model.includes('llama-3.3-70b')) maxTokens = 4096; // 12k TPM free - melhor equilíbrio
+  else if(model.includes('llama-4-scout')) maxTokens = 4096;
+  else if(model.includes('qwen3-32b')) maxTokens = 4096;
   const res=await fetch('https://api.groq.com/openai/v1/chat/completions',{
     method:'POST',
     headers:{'Content-Type':'application/json','Authorization':`Bearer ${apiKey}`},
-    body:JSON.stringify({model,stream:true,max_tokens:8192,temperature:0.7,
+    body:JSON.stringify({model,stream:true,max_tokens:maxTokens,temperature:0.7,
       messages:[{role:'system',content:sys},...msgs.map(m=>({role:m.role,content:m.content}))]
     }),
   });
@@ -1115,7 +1124,16 @@ function NexusIA(){
         }, 100);
       }
     }catch(err){
-      setConvs(p=>p.map(c=>c.id===upd.id?{...c,messages:c.messages.map(m=>m.id===aiId?{...m,content:`❌ Erro: ${err.message}`}:m)}:c));
+      const msg = err.message||'';
+      let friendlyMsg = `❌ **Erro:** ${msg}`;
+      if(msg.includes('Request too large') || msg.includes('TPM') || msg.includes('tokens per minute')){
+        friendlyMsg = `⚠️ **Limite de tokens atingido**\n\nO modelo **${cfg.model}** excedeu o limite de tokens por minuto (TPM) do tier gratuito do Groq.\n\n**Soluções:**\n- ✅ Vá em **Configurações** e troque para **Llama 3.3 70B** (recomendado) ou **Llama 3.1 8B Instant** (mais rápido)\n- 🧹 Use **/limpar** para zerar o histórico da conversa (reduz tokens enviados)\n- 💎 Ou faça upgrade para tier Dev em [console.groq.com/settings/billing](https://console.groq.com/settings/billing)`;
+      }else if(msg.includes('Invalid API Key') || msg.includes('401')){
+        friendlyMsg = `🔑 **API Key inválida**\n\nSua Groq API Key foi rejeitada. Vá em **Configurações** e cole uma key válida obtida em [console.groq.com](https://console.groq.com).`;
+      }else if(msg.includes('rate limit') || msg.includes('429')){
+        friendlyMsg = `⏱ **Muitas requisições**\n\nAguarde alguns segundos e tente novamente.`;
+      }
+      setConvs(p=>p.map(c=>c.id===upd.id?{...c,messages:c.messages.map(m=>m.id===aiId?{...m,content:friendlyMsg}:m)}:c));
     }
     setLoading(false);
   },[activeConv,loading,cfg,clearConv,currentUser]);
