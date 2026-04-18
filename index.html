@@ -4,38 +4,149 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="google" content="notranslate">
-  <title>Nexus IA — Assistente Generativo</title>
-  <meta name="description" content="Assistente de IA generativa com os melhores modelos via Groq">
+  <title>Nexus IA</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✦</text></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600&family=Cormorant:wght@700;800&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #0a0a10; font-family: 'DM Sans', -apple-system, sans-serif; }
-    #root { min-height: 100vh; }
+    :root {
+      /* OrientaMe palette from screenshots */
+      --bg:       #0b0c14;
+      --surface:  #10111c;
+      --card:     #141520;
+      --elevated: #191a28;
+      --border:   #1e2035;
+      --border-h: #2d304f;
+
+      /* Gold accent — from OrientaMe logo/headings */
+      --gold:      #c8a44a;
+      --gold-l:    #e2be6e;
+      --gold-dim:  rgba(200,164,74,0.11);
+      --gold-glow: rgba(200,164,74,0.22);
+
+      /* Blue accent — from OrientaMe activate screen */
+      --blue:      #4a7fc1;
+      --blue-l:    #6b9fd6;
+      --blue-dim:  rgba(74,127,193,0.13);
+      --blue-act:  #2d5fa0;   /* button bg on activate screen */
+
+      /* Status */
+      --green:     #3d9e72;
+      --green-dim: rgba(61,158,114,0.13);
+      --red:       #c0514f;
+      --red-dim:   rgba(192,81,79,0.13);
+      --purple:    #7d63c0;
+      --purple-dim:rgba(125,99,192,0.13);
+
+      /* Text */
+      --text:   #e8e6e0;
+      --muted:  #7a7d99;
+      --faint:  #3f4260;
+
+      /* Fonts */
+      --serif: 'Cormorant Garamond', Georgia, serif;
+      --serif-heavy: 'Cormorant', Georgia, serif;
+      --sans:  'DM Sans', -apple-system, sans-serif;
+      --mono:  'DM Mono', monospace;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root { height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 14px;
+      -webkit-font-smoothing: antialiased;
+      overflow: hidden;
+    }
+
+    /* Ambient background */
+    body::before {
+      content: '';
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      background:
+        radial-gradient(ellipse 55% 35% at 15% 8%,  rgba(200,164,74,0.035) 0%, transparent 65%),
+        radial-gradient(ellipse 40% 55% at 85% 85%, rgba(74,127,193,0.04)  0%, transparent 65%),
+        radial-gradient(ellipse 30% 40% at 50% 50%, rgba(74,127,193,0.02)  0%, transparent 70%);
+    }
+
+    #root { position: relative; z-index: 1; }
+
+    /* ── Loading ── */
     #loading {
-      position: fixed; inset: 0; background: #0a0a10;
+      position: fixed; inset: 0; background: var(--bg);
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 16px; z-index: 9999; transition: opacity 0.4s ease;
+      gap: 12px; z-index: 9999; transition: opacity 0.5s ease;
     }
-    #loading .logo {
-      width: 64px; height: 64px; border-radius: 18px;
-      background: linear-gradient(135deg, #e8c96d, #c9a84c, #8b6914);
-      display: flex; align-items: center; justify-content: center;
-      font-size: 28px; animation: pulse 1.5s ease infinite;
-      box-shadow: 0 10px 40px rgba(201,168,76,0.3);
+    #loading .brand {
+      font-family: var(--serif-heavy);
+      font-size: 38px; font-weight: 800;
+      color: var(--gold); letter-spacing: -0.5px;
+      animation: fadeUp 0.6s ease both;
     }
-    #loading .text { font-family: 'Playfair Display', serif; font-size: 26px; color: #c9a84c; font-weight: 900; letter-spacing: -0.5px; }
-    #loading .sub { font-size: 12px; color: #8a8799; letter-spacing: 0.5px; }
-    @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.08)} }
+    #loading .sub {
+      font-family: var(--sans); font-size: 11px;
+      color: var(--muted); letter-spacing: 1.5px; text-transform: uppercase;
+      animation: fadeUp 0.6s ease 0.1s both;
+    }
+    #loading .bar {
+      width: 80px; height: 2px; background: var(--border);
+      border-radius: 99px; overflow: hidden; margin-top: 8px;
+      animation: fadeUp 0.6s ease 0.2s both;
+    }
+    #loading .bar::after {
+      content: ''; display: block; height: 100%;
+      background: linear-gradient(90deg, var(--gold), var(--gold-l));
+      animation: loadBar 1.2s ease infinite;
+    }
+    @keyframes loadBar { 0%{width:0;margin-left:0} 50%{width:100%;margin-left:0} 100%{width:0;margin-left:100%} }
+
+    /* ── Animations ── */
+    @keyframes fadeUp   { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+    @keyframes fadeIn   { from{opacity:0} to{opacity:1} }
+    @keyframes float    { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-5px)} }
+    @keyframes spin     { to{transform:rotate(360deg)} }
+    @keyframes pulse    { 0%,100%{opacity:1} 50%{opacity:0.4} }
+    @keyframes bounceDot{ 0%,60%,100%{transform:translateY(0)} 30%{transform:translateY(-5px)} }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 3px; height: 3px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border-h); border-radius: 99px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--gold); }
+
+    /* ── Prose / Markdown ── */
+    .prose { font-size: 14px; line-height: 1.8; color: var(--text); font-family: var(--sans); }
+    .prose h1,.prose h2,.prose h3 { font-family: var(--serif); font-weight: 600; color: var(--text); margin: 1.1em 0 0.4em; }
+    .prose h1 { font-size: 1.55rem } .prose h2 { font-size: 1.28rem } .prose h3 { font-size: 1.1rem }
+    .prose p { margin: 0.55em 0; }
+    .prose ul,.prose ol { padding-left: 1.4em; margin: 0.5em 0; }
+    .prose li { margin: 0.2em 0; }
+    .prose strong { color: var(--text); font-weight: 600; }
+    .prose em { color: var(--muted); }
+    .prose code:not([class]) { background: rgba(0,0,0,0.35); color: var(--gold-l); padding: 2px 6px; border-radius: 4px; font-family: var(--mono); font-size: 0.84em; border: 1px solid var(--border-h); }
+    .prose pre { background: #080912 !important; border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; overflow: auto; margin: 0.75em 0; }
+    .prose pre code { background: transparent; border: none; padding: 0; color: var(--text); font-size: 13px; }
+    .prose blockquote { border-left: 2px solid var(--gold); padding-left: 1em; color: var(--muted); font-family: var(--serif); font-style: italic; margin: 0.7em 0; font-size: 15px; }
+    .prose table { width: 100%; border-collapse: collapse; margin: 0.75em 0; font-size: 0.9em; }
+    .prose th { background: var(--elevated); color: var(--text); padding: 8px 12px; text-align: left; border: 1px solid var(--border); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .prose td { padding: 7px 12px; border: 1px solid var(--border); color: var(--muted); }
+    .prose tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
+    .prose a { color: var(--gold); text-decoration: underline; text-underline-offset: 2px; }
+    .prose hr { border: none; border-top: 1px solid var(--border); margin: 1em 0; }
+
+    select option { background: var(--card); color: var(--text); }
+    input::placeholder, textarea::placeholder { color: var(--faint); }
+
   </style>
 </head>
 <body>
   <div id="loading">
-    <div class="logo">✦</div>
-    <div class="text">Nexus IA</div>
-    <div class="sub">Carregando...</div>
+    <div class="brand">Nexus IA</div>
+    <div class="sub">Assistente Generativo</div>
+    <div class="bar"></div>
   </div>
   <div id="root"></div>
 
@@ -44,20 +155,21 @@
   <script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
   <script src="app.js"></script>
 
+
   <script>
     try {
       const root = ReactDOM.createRoot(document.getElementById('root'));
       root.render(React.createElement(window.__NexusIA));
       setTimeout(() => {
         const l = document.getElementById('loading');
-        if (l) { l.style.opacity = '0'; setTimeout(() => l.remove(), 400); }
-      }, 600);
-    } catch(e) {
+        if(l){ l.style.opacity='0'; setTimeout(()=>l.remove(),500); }
+      }, 800);
+    } catch(err) {
       document.getElementById('loading').innerHTML =
-        '<div style="color:#e05c5c;font-family:monospace;padding:20px;max-width:600px;text-align:center">' +
-        '<div style="font-size:32px;margin-bottom:12px">⚠️</div>' +
-        '<div style="font-size:14px">Erro ao inicializar: ' + e.message + '</div></div>';
-      console.error(e);
+        '<div style="color:#c0514f;font-family:monospace;padding:20px;text-align:center">' +
+        '<div style="font-size:28px;margin-bottom:10px">⚠</div>' +
+        '<div>Erro: '+err.message+'</div></div>';
+      console.error(err);
     }
   </script>
 </body>
